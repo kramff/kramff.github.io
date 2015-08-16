@@ -8,3 +8,6 @@ function touchStart () {
 player.y -= 1;
 }
 
+function touchEnd (event) {
+player.z = 100;
+}
