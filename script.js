@@ -18,6 +18,8 @@ var TILE_SIZE = 5.4;
 
 var editorActive = false;
 
+var fakeExtra = {opacity: 1, pattern: 0};
+
 var wKey = false;
 var aKey = false;
 var sKey = false;
@@ -64,6 +66,7 @@ var STATUS_DRAWING = 1;
 var STATUS_ACTIVE = 2;
 
 var areas = [];
+var areaColors = [];
 var entities = [];
 var drawObjects = [];
 
@@ -87,21 +90,27 @@ function Entity (x, y, z) {
 	this.zMov = 0;
 	this.moveDelay = 0;
 	this.delayTime = 10;
+
+	//Riding on (standing on) an area: only 1 at a time, undefined if none
+	this.ridingArea = undefined;
+
+	//Pushed by an area: can be multiple, pushing areas stored in array
+	this.pushingAreas = [];
+
 }
 
-var player = CreateEntity();
+var player;
+var firstTransparentTilesArray = [[99, 99, 99],[99, 99, 99],[99, 99, 99]];
+var underCeiling = false;
 
-function CreateArea () {
-	var newArea = new Area(0, 0, 0, 11, 11, 10);
-	areas.push(newArea);
-	drawObjects.push(newArea);
-	return newArea;
-}
-
-function Area (x, y, z, xSize, ySize, zSize) {
+function Area (x, y, z, xSize, ySize, zSize, useImport, map, rule) {
 	this.x = x;
 	this.y = y;
 	this.z = z;
+	
+	this.xSize = xSize;
+	this.ySize = ySize;
+	this.zSize = zSize;
 
 	this.xMov = 0;
 	this.yMov = 0;
@@ -109,91 +118,41 @@ function Area (x, y, z, xSize, ySize, zSize) {
 	this.moveDelay = 0;
 	this.delayTime = 10;
 
-	this.xSize = xSize;
-	this.ySize = ySize;
-	this.zSize = zSize;
+	this.rule = rule;
+
+	this.name = "Area " + (areas.length + 1);
+
 	this.status = 0;
 	this.extraData = []; //[x][y][z] - object with any values
 	this.map = []; //[x][y][z] - type (number)
+	if (useImport)
+	{
+		this.map = map;
+	}
 	for (var i = 0; i < xSize; i++)
 	{
-		this.map.push([]);
+		if (!useImport)
+		{
+			this.map.push([]);
+		}
 		this.extraData.push([]);
 		for (var j = 0; j < ySize; j++)
 		{
-			this.map[i].push([]);
+			if (!useImport)
+			{
+				this.map[i].push([]);
+			}
 			this.extraData[i].push([]);
 			for (var k = 0; k < zSize; k++)
 			{
 				var tile = EMPTY;
-
-				if (areas.length === 0)
+				if (!useImport)
 				{
-					//stairs room with right side open
-					if (i%11 === 0 || j%10 === 0 || k === 0)
-					{
-						tile = SOLID;
-					}
-					if (i === 5 && j > k && k !== 0 && j !== 10)
-					{
-						tile = APPEAR_BLOCK;
-					}
-					if (i === 8 &&  k !== 0 && j !== 10 && j !== 0 && k < 4)
-					{
-						tile = DISAPPEAR_BLOCK;
-					}
+					
 				}
-				else if (areas.length === 1)
+				else // (useImport === true)
 				{
-					//Valley
-					if (k === Math.abs(i - 5))
-					{
-						tile = APPEAR_BLOCK;
-					}
-				}
-				else if (areas.length === 2)
-				{
-					//some pillars room
-					if ((i-j)%3 === 0 && (i+j)/2-0>k)
-					{
-						tile = APPEAR_BLOCK;
-					}
-					if (j === 0 || j === 10 || i === 10 || k === 0)
-					{
-						tile = SOLID;
-					}
-				}
-				else if (areas.length === 3)
-				{
-					//neato pattern test room
-					if (k === 0)
-					{
-						tile = SOLID;
-						if ((i > 1 && i < 9) && (j > 1 && j < 9))
-						{
-							tile = PATTERN_ACTIVATE_BLOCK;
-						}
-						if (i > 2 && i < 8 && j > 2 && j < 8)
-						{
-							tile = PATTERN_BLOCK;
-						}
-						if ((i === 1 || i === 9) && (j === 1 || j === 9))
-						{
-							tile = PATTERN_CLEAR_BLOCK;
-						}
-					}
-				}
-				else
-				{
-					//narrow walkway room
-					if ((j === 4 || j === 5 || j === 6) && k === 0)
-					{
-						tile = APPEAR_BLOCK;
-					}
-					if ((i === 4 || i === 5 || i === 6) && k === 0 || ((i === 2 || i === 8) && j%6 === 2))
-					{
-						tile = SOLID;
-					}
+					tile = this.map[i][j][k];
 				}
 				var extra;
 				switch (tile)
@@ -212,7 +171,10 @@ function Area (x, y, z, xSize, ySize, zSize) {
 					break;
 				}
 				this.extraData[i][j].push(extra);
-				this.map[i][j].push(tile);
+				if (!useImport)
+				{
+					this.map[i][j].push(tile);
+				}
 			}
 		}
 	}
@@ -245,19 +207,27 @@ function SetTile (area, x, y, z, tile) {
 
 function Init () {
 	window.requestAnimationFrame(Update);
-	CreateArea();
-	CreateArea(); areas[1].x = 11; areas[1].z = -5;
-	CreateArea(); areas[2].x = 22;
-	CreateArea(); areas[3].y = 11; areas[3].z = 9;
-	CreateArea(); areas[4].y = 11; areas[4].z = -100;
+	
+
+	areaColors = GenerateColorPalette(areas.length);
+
 
 	ResizeCanvas();
 	StartMapEditor();
+
+	player = CreateEntity();
+	InitGame();
+}
+
+function InitGame () {
+	//player = CreateEntity();
 
 	xCam = player.x + 0.5;
 	yCam = player.y + 0.5;
 	zCam = player.z;
 }
+
+
 
 var lastTime = new Date;
 var delay = 0;
@@ -306,6 +276,27 @@ function AreaUpdate () {
 			area.moveDelay --;
 			if (area.moveDelay <= 0)
 			{
+				//End area movement
+
+				//Move player if they are riding on this area
+				if (player.ridingArea === area)
+				{
+					player.ridingArea = undefined;
+					player.x += area.xMov;
+					player.y += area.yMov;
+					player.z += area.zMov;
+				}
+				//Move player if they are being pushed by this area
+				if (player.pushingAreas.indexOf(area) !== -1)
+				{
+					player.pushingAreas.splice(player.pushingAreas.indexOf(area));
+					player.x += area.xMov;
+					player.y += area.yMov;
+					player.z += area.zMov;
+
+				}
+
+				//Move area
 				area.x += area.xMov;
 				area.y += area.yMov;
 				area.z += area.zMov;
@@ -617,6 +608,41 @@ function MovementZRules (entity) {
 	//otherwise: level movement
 }
 
+function BeginAreaMovement (area, xMov, yMov, zMov, delay) {
+	area.moveDelay = delay;
+	area.delayTime = delay;
+	area.xMov = xMov;
+	area.yMov = yMov;
+	area.zMov = zMov;
+
+	//Check if player is standing on any tiles in area
+	if (LocationInArea(area, player.x, player.y, player.z - 1))
+	{
+		var onTile = area.map[player.x - area.x][player.y - area.y][player.z - area.z - 1];
+		if (TileIsSolid(onTile))
+		{
+			//Player is riding on moving tile
+			console.log("Standing on tile");
+			player.riding = true;
+			player.ridingArea = area;
+		}
+	}
+	//Check if player is standing in path of a tile
+	//(cannot be pushed if already riding on area)
+	else if (LocationInArea(area, player.x - xMov, player.y - yMov, player.z - zMov))
+	{
+		var pushingTile = area.map[player.x - area.x - xMov][player.y - area.y - yMov][player.z - area.z - zMov];
+		if (TileIsSolid(pushingTile))
+		{
+			//Player is in path of pushing tile
+			console.log("Pushed by tile");
+			player.pushed = true;
+			player.pushingAreas.push(area);
+		}
+	}
+
+}
+
 function Render () {
 
 	//Camera position
@@ -628,10 +654,17 @@ function Render () {
 	//Canvas rendering
 	canvas.width = canvas.width;
 
+	//Set standard font
+	ctx.font = "16px sans-serif";
+
 	ctx.strokeStyle = "#FFFFFF";
 	ctx.fillStyle = "#101010";
 
 	numSquares = 0;
+
+	GetFirstTransparentTiles();
+	underCeiling = UnderCeilingCheck();
+
 	DrawAllObjects();
 
 	if (edgeSquareLimit.active)
@@ -671,18 +704,99 @@ function Render () {
 		ctx.strokeText("Z(player):", 5, 120);
 		ctx.strokeText(GetEntityZ(player), 70, 120);
 	}
+
+	if (editorActive)
+	{
+
+		//Draw tile select left sidebar
+		ctx.fillStyle = "#300030";
+		ctx.fillRect(0, 0, 70, CANVAS_HEIGHT);
+		//8 = number of tile types so far
+		for (var i = 0; i < 8; i++)
+		{
+			DrawTileExtra(10, 10 + i * 60, 50, i, 0, 0, 0, fakeExtra);
+		}
+
+		//Draw area/other menu right sidebar
+		ctx.fillStyle = "#303000";
+		ctx.fillRect(CANVAS_WIDTH - 200, 0, 200, CANVAS_HEIGHT);
+		//Draw area/other buttons
+		DrawEditorButton(0, "Create Area");
+		DrawEditorButton(1, "Remove Area");
+		DrawEditorButton(2, "Resize Area");
+		DrawEditorButton(3, "Load Level");
+		DrawEditorButton(4, "Save Level");
+
+		//Draw area selector top bar
+		ctx.fillStyle = "#404040";
+		ctx.fillRect(70, 0, CANVAS_WIDTH - 270, 40);
+		ctx.fillStyle = "#FFFFFF";
+		var infoString = "Level 1 : " + GetAreasAtPosition(player.x, player.y, player.z, true).join(", ");
+		ctx.fillText(infoString, 70, 30);
+
+
+		//Draw rules menu bottom bar
+		ctx.fillStyle = "#003030";
+		ctx.fillRect(70, CANVAS_HEIGHT - 100, CANVAS_WIDTH - 270, 100);
+
+	}
+}
+
+function DrawEditorButton (btnNum, text) {
+	ctx.fillStyle = "#303030";
+	ctx.fillRect(CANVAS_WIDTH - 190, 10 + btnNum * 60, 170, 50);
+	ctx.fillStyle = "#FFFFFF";
+	ctx.fillText(text, CANVAS_WIDTH - 90 - text.length * 5, 40 + btnNum * 60);
+
+}
+
+//getName: if true, get the name of each area
+//(For now, name is just "Area #")
+function GetAreasAtPosition (x, y, z, getName) {
+	var areasHere = [];
+	for (var i = 0; i < areas.length; i++)
+	{
+		var area = areas[i];
+		if (LocationInArea(area, x, y, z))
+		{
+			if (getName === true)
+			{
+				areasHere.push(area.name);
+			}
+			else
+			{
+				areasHere.push(area);
+			}
+		}
+	}
+	return areasHere;
 }
 
 function GetEntityX (entity) {
-	return entity.x + entity.xMov * (entity.delayTime - entity.moveDelay) / entity.delayTime;
+	return entity.x +
+		entity.xMov * (entity.delayTime - entity.moveDelay) / entity.delayTime +
+		(entity.ridingArea !== undefined ? GetAreaX(entity.ridingArea) - entity.ridingArea.x : 0) +
+		(entity.pushingAreas.length > 0 ? GetAreaX(entity.pushingAreas[0]) - entity.pushingAreas[0].x : 0) +
+		(entity.pushingAreas.length > 1 ? GetAreaX(entity.pushingAreas[1]) - entity.pushingAreas[1].x : 0) +
+		(entity.pushingAreas.length > 2 ? GetAreaX(entity.pushingAreas[2]) - entity.pushingAreas[2].x : 0);
 }
 
 function GetEntityY (entity) {
-	return entity.y + entity.yMov * (entity.delayTime - entity.moveDelay) / entity.delayTime;
+	return entity.y +
+		entity.yMov * (entity.delayTime - entity.moveDelay) / entity.delayTime +
+		(entity.ridingArea !== undefined ? GetAreaY(entity.ridingArea) - entity.ridingArea.y : 0) +
+		(entity.pushingAreas.length > 0 ? GetAreaY(entity.pushingAreas[0]) - entity.pushingAreas[0].y : 0) +
+		(entity.pushingAreas.length > 1 ? GetAreaY(entity.pushingAreas[1]) - entity.pushingAreas[1].y : 0) +
+		(entity.pushingAreas.length > 2 ? GetAreaY(entity.pushingAreas[2]) - entity.pushingAreas[2].y : 0);
 }
 
 function GetEntityZ (entity) {
-	return entity.z + entity.zMov * (entity.delayTime - entity.moveDelay) / entity.delayTime;
+	return entity.z +
+		entity.zMov * (entity.delayTime - entity.moveDelay) / entity.delayTime +
+		(entity.ridingArea !== undefined ? GetAreaZ(entity.ridingArea) - entity.ridingArea.z : 0) +
+		(entity.pushingAreas.length > 0 ? GetAreaZ(entity.pushingAreas[0]) - entity.pushingAreas[0].z : 0) +
+		(entity.pushingAreas.length > 1 ? GetAreaZ(entity.pushingAreas[1]) - entity.pushingAreas[1].z : 0) +
+		(entity.pushingAreas.length > 2 ? GetAreaZ(entity.pushingAreas[2]) - entity.pushingAreas[2].z : 0);
 }
 
 function GetAreaX (area) {
@@ -707,7 +821,14 @@ function DrawAllObjects () {
 		//no objects to draw
 		return;
 	}
-	drawObjects.sort(function (a, b) {return a.z - b.z;});
+	drawObjects.sort(function (a, b) {
+		if (a === player || b === player)
+		{
+			if (a === player) return a.z + 0.1 - b.z;
+			else return a.z - b.z - 0.1;
+		}
+		return a.z - b.z;
+	});
 	var bottomZ = drawObjects[0].z;
 	var topZ = drawObjects[drawObjects.length - 1].z;
 	var bottomI = 0;
@@ -719,7 +840,7 @@ function DrawAllObjects () {
 			topZ = Math.max(topZ, drawObjects[i].z + drawObjects[i].zSize);
 		}
 	}
-	for (var z = bottomZ; z <= topZ; z++)
+	for (var z = bottomZ; z <= topZ + 1; z++)
 	{
 		var i = bottomI;
 		var currentObject = drawObjects[i];
@@ -785,7 +906,7 @@ function DrawDObjZ (dObj, z) {
 }
 
 function DrawAreaZSlice(area, z) {
-	var scale = GetScale(z);
+	var scale = GetScale(z + GetAreaZ(area) - area.z);
 	if (scale > 0.01)
 	{
 		for (var i = 0; i < area.xSize; i++)
@@ -798,7 +919,7 @@ function DrawAreaZSlice(area, z) {
 					var y = scale * (j + GetAreaY(area) - yCam) + CANVAS_HALF_HEIGHT;
 					if (y > 0 - scale && y < CANVAS_HEIGHT)
 					{	
-						var tile = area.map[i][j][z - GetAreaZ(area)];
+						var tile = area.map[i][j][z - area.z];
 						if (tile > 0)
 						{
 							if (tile > 1)
@@ -808,7 +929,14 @@ function DrawAreaZSlice(area, z) {
 							else
 							{
 								//SOLID tile
-								DrawTile(x, y, scale);
+								if (InCeiling(i + area.x, j + area.y, z))
+								{
+									DrawTileInCeiling(x, y, scale);
+								}
+								else
+								{
+									DrawTile(x, y, scale);
+								}
 							}
 							numSquares ++;
 						}
@@ -825,10 +953,14 @@ function DrawAreaZSlice(area, z) {
 
 function DrawTileExtra (x, y, scale, tile, i, j, k, extra) {
 	ctx.save();
+	var doDraw = true;
 	switch (tile)
 	{
 		default:
-			DrawTile(x, y, scale);
+			//DrawTile(x, y, scale);
+		break;
+		case EMPTY:
+			doDraw = false;
 		break;
 		case DISAPPEAR_BLOCK:
 			if (!IsNear(i, j, k, player.x, player.y, player.z, 1))
@@ -839,13 +971,18 @@ function DrawTileExtra (x, y, scale, tile, i, j, k, extra) {
 			{
 				extra.opacity = Math.max(0, extra.opacity - 0.07);
 			}
+			if (editorActive)
+			{
+				extra.opacity = 1;
+				ctx.fillStyle = "#501010"
+			}
 			if (extra.opacity !== 1)
 			{
 				ctx.globalAlpha = extra.opacity;
 			}
-			if (extra.opacity !== 0)
+			if (extra.opacity < 0.1)
 			{
-				DrawTile(x, y, scale)
+				doDraw = false;
 			}
 		break;
 		case APPEAR_BLOCK:
@@ -857,15 +994,19 @@ function DrawTileExtra (x, y, scale, tile, i, j, k, extra) {
 			{
 				extra.opacity = Math.max(0, extra.opacity - 0.07);
 			}
+			if (editorActive)
+			{
+				extra.opacity = 1;
+				ctx.fillStyle = "#105010"
+			}
 			if (extra.opacity !== 1)
 			{
 				ctx.globalAlpha = extra.opacity;
 			}
-			if (extra.opacity !== 0)
+			if (extra.opacity < 0.1)
 			{
-				DrawTile(x, y, scale)
+				doDraw = false;
 			}
-
 		break;
 		case PATTERN_BLOCK:
 			if (extra.pattern === 0)
@@ -876,35 +1017,43 @@ function DrawTileExtra (x, y, scale, tile, i, j, k, extra) {
 			{
 				ctx.fillStyle = "#C0C000";
 			}
-			DrawTile(x, y, scale);
 		break;
 		case PATTERN_BLOCK:
 			ctx.fillStyle = "#800000";
-			DrawTile(x, y, scale);
 		break;
 		case PATTERN_CLEAR_BLOCK:
 			ctx.fillStyle = "#000080";
-			DrawTile(x, y, scale);
 		break;
 		case PATTERN_ACTIVATE_BLOCK:
 			ctx.fillStyle = "#400080";
-			DrawTile(x, y, scale);
 		break;
 		case PATTERN_EFFECT_BLOCK:
 			extra.opacity = Math.min(0.75, extra.opacity + 0.02);
 			ctx.globalAlpha = extra.opacity;
-			DrawTile(x, y, scale);
 		break;
 		case PATTERN_HOLE_BLOCK:
 			extra.opacity = Math.max(0, extra.opacity - 0.07);
-			if (extra.opacity !== 0)
+			if (extra.opacity >= 0.1)
 			{
 				ctx.fillStyle = "#800000";
 				ctx.globalAlpha = extra.opacity;
-				DrawTile(x, y, scale)
+			}
+			else
+			{
+				doDraw = false;
 			}
 		break;
-
+	}
+	if (doDraw)
+	{
+		if (InCeiling(i, j, k))
+		{
+			DrawTileInCeiling(x, y, scale);
+		}
+		else
+		{
+			DrawTile(x, y, scale);
+		}
 	}
 	ctx.restore();
 }
@@ -915,7 +1064,50 @@ function DrawTile (x, y, scale) {
 	ctx.strokeRect(x, y, scale, scale);
 }
 
-//Up to 1 tile away in all directions
+function DrawTileInCeiling (x, y, scale) {
+	ctx.save();
+
+	ctx.globalAlpha *= 0.5;
+	ctx.fillRect(x, y, scale, scale);
+	ctx.strokeRect(x, y, scale, scale);
+	ctx.restore();
+}
+
+function UnderCeilingCheck () {
+	var x = player.x;
+	var y = player.y;
+	var z = player.z;
+
+	while (!IsOpaque(x, y, z))
+	{
+		z ++;
+		if (GetScale(z) < 0)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+function GetFirstTransparentTiles () {
+	for (var i = 0; i < 3; i++)
+	{
+		for (var j = 0; j < 3; j++)
+		{
+			var x = player.x + i - 1;
+			var y = player.y + j - 1;
+			var z = player.z;
+			
+			while (IsOpaque(x, y, z))
+			{
+				z ++;
+			}
+			firstTransparentTilesArray[i][j] = z;
+		}
+	}
+}
+
+//Up to <dist> tiles away in all directions, except for z which is more forgiving by 2
 function IsNear (x1, y1, z1, x2, y2, z2, dist) {
 	if (Math.abs(x1 - x2) <= dist && Math.abs(y1 - y2) <= dist && Math.abs(z1 - z2) <= dist + 2)
 	{
@@ -923,6 +1115,31 @@ function IsNear (x1, y1, z1, x2, y2, z2, dist) {
 	}
 	return false;
 }
+
+function InCeiling (x, y, z) {
+	//Check if player is under a ceiling
+	if (!underCeiling)
+	{
+		return false;
+	}
+	//Check if z is above player
+	if (z <= player.z)
+	{
+		return false;
+	}
+	//Check if x, y are within 3x3 square around player
+	if (x > player.x + 1 || x < player.x - 1 || y > player.y + 1 || y < player.y - 1)
+	{
+		return false;
+	}
+	//Check if tile is above an empty tile above the player
+	if (firstTransparentTilesArray[x - player.x + 1][y - player.y + 1] > z)
+	{
+		return false;
+	}
+	return true;
+}
+
 
 function DrawEntity (entity) {
 
@@ -956,7 +1173,7 @@ function DrawAreaEdges (area, scale, z) {
 		ctx.globalAlpha = 0.9;
 		ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
 	}
-	ctx.strokeStyle = "#FF0000";
+	ctx.strokeStyle = areaColors[areas.indexOf(area)];
 	ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
 	if (z === player.z)
 	{
@@ -967,8 +1184,7 @@ function DrawAreaEdges (area, scale, z) {
 	ctx.restore();
 }
 
-
-function IsSolid (x, y, z) {
+function IsOpaque (x, y, z) {
 	for (var i = 0; i < areas.length; i++)
 	{
 		var area = areas[i];
@@ -976,31 +1192,136 @@ function IsSolid (x, y, z) {
 		{
 			//Within area's bounds
 			var tile = area.map[x - area.x][y - area.y][z - area.z];
-			if (tile === SOLID)
-			{
-				return true;
-			}
-			if (tile === APPEAR_BLOCK)
-			{
-				return true;
-			}
-			if (tile === PATTERN_BLOCK)
-			{
-				return true;
-			}
-			if (tile === PATTERN_ACTIVATE_BLOCK)
-			{
-				return true;
-			}
-			if (tile === PATTERN_CLEAR_BLOCK)
-			{
-				return true;
-			}
-			if (tile === PATTERN_EFFECT_BLOCK)
+			if (TileIsOpaque(tile))
 			{
 				return true;
 			}
 		}
+	}
+	return false;
+}
+
+function TileIsOpaque (tile) {
+	if (tile === SOLID)
+	{
+		return true;
+	}
+	if (tile === DISAPPEAR_BLOCK)
+	{
+		return true;
+	}
+	if (tile === PATTERN_BLOCK)
+	{
+		return true;
+	}
+	if (tile === PATTERN_ACTIVATE_BLOCK)
+	{
+		return true;
+	}
+	if (tile === PATTERN_CLEAR_BLOCK)
+	{
+		return true;
+	}
+	if (tile === PATTERN_EFFECT_BLOCK)
+	{
+		return true;
+	}
+}
+
+function IsSolid (x, y, z) {
+	for (var i = 0; i < areas.length; i++)
+	{
+		var area = areas[i];
+		if (x >= area.x && x < area.x + area.xSize &&
+			y >= area.y && y < area.y + area.ySize &&
+			z >= area.z && z < area.z + area.zSize)
+		{
+			//Within area's bounds
+			var tile = area.map[x - area.x][y - area.y][z - area.z];
+			if (TileIsSolid(tile))
+			{
+				return true;
+			}
+		}
+		if (area.xMov !== 0 || area.yMov !== 0 || area.zMov !== 0)
+		{
+			//Area is moving: check new bounds
+			if (x >= area.x + area.xMov && x < area.x + area.xMov + area.xSize &&
+				y >= area.y + area.yMov && y < area.y + area.yMov + area.ySize &&
+				z >= area.z + area.zMov && z < area.z + area.zMov + area.zSize)
+			{
+				var tile = area.map[x - area.x - area.xMov][y - area.y - area.yMov][z - area.z - area.zMov];
+				if (TileIsSolid(tile))
+				{
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+//Same as IsSolid but ignore an area
+function IsSolidIgnoreArea (x, y, z, ignoreArea) {
+	for (var i = 0; i < areas.length; i++)
+	{
+		var area = areas[i];
+		if (area !== ignoreArea)
+		{
+			if (x >= area.x && x < area.x + area.xSize &&
+				y >= area.y && y < area.y + area.ySize &&
+				z >= area.z && z < area.z + area.zSize)
+			{
+				//Within area's bounds
+				var tile = area.map[x - area.x][y - area.y][z - area.z];
+				if (TileIsSolid(tile))
+				{
+					return true;
+				}
+			}
+			if (area.xMov !== 0 || area.yMov !== 0 || area.zMov !== 0)
+			{
+				//Area is moving: check new bounds
+				if (x >= area.x + area.xMov && x < area.x + area.xMov + area.xSize &&
+					y >= area.y + area.yMov && y < area.y + area.yMov + area.ySize &&
+					z >= area.z + area.zMov && z < area.z + area.zMov + area.zSize)
+				{
+					var tile = area.map[x - area.x - area.xMov][y - area.y - area.yMov][z - area.z - area.zMov];
+					if (TileIsSolid(tile))
+					{
+						return true;
+					}
+				}
+			}
+		}
+	}
+	return false;
+}
+
+function TileIsSolid (tile) {
+	if (tile === SOLID)
+	{
+		return true;
+	}
+	if (tile === APPEAR_BLOCK)
+	{
+		return true;
+	}
+	if (tile === PATTERN_BLOCK)
+	{
+		return true;
+	}
+	if (tile === PATTERN_ACTIVATE_BLOCK)
+	{
+		return true;
+	}
+	if (tile === PATTERN_CLEAR_BLOCK)
+	{
+		return true;
+	}
+	if (tile === PATTERN_EFFECT_BLOCK)
+	{
+		return true;
 	}
 	return false;
 }
@@ -1305,6 +1626,34 @@ function DoKeyDown (e) {
 	{
 		rightKey = true;
 	}
+	else if (e.keyCode === 49)
+	{
+		//1
+		//start map editor
+		if (editorActive)
+		{
+			EndMapEditor();
+		}
+		else
+		{
+			StartMapEditor();
+		}
+	}
+	else if (e.keyCode === 50)
+	{
+		//2
+		//move areas[6] left
+
+		BeginAreaMovement(areas[6], -1, 0, 0, 10);
+	}
+	else if (e.keyCode === 51)
+	{
+		//3
+		//move areas[6] right
+
+		BeginAreaMovement(areas[6], 1, 0, 0, 10);
+	}
+	//console.log(e.keyCode);
 	mouseMovement = false;
 }
 
@@ -1353,13 +1702,17 @@ function DoKeyUp (e) {
 	}
 }
 
+var mButton;
 
 window.addEventListener('mousedown', DoMouseDown, true);
 
 function DoMouseDown (e) {
+	e.preventDefault();
+
 	mouseX = e.clientX;
 	mouseY = e.clientY;
 	mousePressed = true;
+	mButton = e.button;
 	if (editorActive)
 	{
 		EditorMouseDown();
@@ -1369,11 +1722,14 @@ function DoMouseDown (e) {
 	mouseTilesY = ScreenYToWorldY(mouseY, player.z);
 	
 	mouseMovement = true;
+
 }
 
 window.addEventListener('mousemove', DoMouseMove, true);
 
 function DoMouseMove (e) {
+	e.preventDefault();
+	
 	mouseX = e.clientX;
 	mouseY = e.clientY;
 	if (editorActive)
@@ -1386,6 +1742,8 @@ function DoMouseMove (e) {
 window.addEventListener('mouseup', DoMouseUp, true);
 
 function DoMouseUp (e) {
+	e.preventDefault();
+	
 	mouseX = e.clientX;
 	mouseY = e.clientY;
 	mousePressed = false;
@@ -1395,6 +1753,12 @@ function DoMouseUp (e) {
 		return;
 	}
 }
+
+window.oncontextmenu = function(event) {
+	event.preventDefault();
+	//event.stopPropagation();
+	//return false;
+};
 
 function EditTile (editX, editY, editZ, tile) {
 	for (var i = 0; i < areas.length; i++)
@@ -1408,12 +1772,93 @@ function EditTile (editX, editY, editZ, tile) {
 	}
 }
 
+function CreateArea (x, y, z, xSize, ySize, zSize) {
+	var newArea = new Area(x, y, z, xSize, ySize, zSize);
+	areas.push(newArea);
+	drawObjects.push(newArea);
+	return newArea;
+}
+
+function RemoveAreaAt (x, y, z) {
+ 	for (var i = 0; i < areas.length; i++)
+ 	{
+ 		var area = areas[i];
+ 		if (LocationInArea(area, x, y, z))
+ 		{
+ 			drawObjects.splice(drawObjects.indexOf(area), 1);
+ 			areas.splice(areas.indexOf(area), 1);
+ 			return; //Only remove 1 area at a time
+ 		}
+ 	}
+}
+function ResizeAreaTo (x, y, z) {
+ 	for (var i = 0; i < areas.length; i++)
+ 	{
+ 		var area = areas[i];
+ 		if (LocationInArea(area, x, y, z))
+ 		{
+ 			area.xSize = x - area.x + 1;
+ 			area.ySize = y - area.y + 1;
+ 			area.zSize = z - area.z + 1;
+ 		}
+ 	}
+}
+
+
+
 var lastEditedX;
 var lastEditedY;
 var lastEditedZ;
 
+var editType = SOLID;
+var editTypeL = SOLID;
+var editTypeR = EMPTY;
 
 function EditorMouseDown () {
+	if (mouseX < 70)
+	{
+		// mouse is in tile selection part of screen
+		var tileNum = Math.floor((mouseY - 5) / 60);
+		if (mButton === 0)
+		{
+			editTypeL = tileNum;
+		}
+		if (mButton === 2)
+		{
+			editTypeR = tileNum;
+		}
+		return;
+	}
+	if (mouseX > CANVAS_WIDTH - 200)
+	{
+		//mouse is in the button menu part of screen
+		var buttonNum = Math.floor((mouseY - 5) / 60);
+		switch (buttonNum)
+		{
+			case 0:
+				//Create Area
+				CreateArea(player.x, player.y, player.z, 5, 5, 5);
+			break;
+			case 1:
+				//Remove Area
+				RemoveAreaAt(player.x, player.y, player.z);
+			break;
+			case 2:
+				//Resize Area
+				ResizeAreaTo(player.x, player.y, player.z)
+			break;
+			case 3:
+				//Load Level
+				ImportLevel(LoadFromLocalStorage("level1"));
+			break;
+			case 4:
+				//Save Level
+				SaveToLocalStorage(ExportLevel(), "level1");
+			break;
+		}
+
+		return;
+	}
 	var editX = ScreenXToWorldX(mouseX, player.z) + player.x;
 	var editY = ScreenYToWorldY(mouseY, player.z) + player.y;
 	var editZ = player.z;
@@ -1422,7 +1867,16 @@ function EditorMouseDown () {
 	lastEditedY = editY;
 	lastEditedZ = editZ;
 
-	EditTile(editX, editY, editZ, 1);
+	if (mButton === 0)
+	{
+		editType = editTypeL;
+	}
+	if (mButton === 2)
+	{
+		editType = editTypeR;
+	}
+
+	EditTile(editX, editY, editZ, editType);
 	
 	
 }
@@ -1440,7 +1894,7 @@ function EditorMouseMove () {
 			lastEditedY = editY;
 			lastEditedZ = editZ;
 
-			EditTile(editX, editY, editZ, 1);
+			EditTile(editX, editY, editZ, editType);
 		}
 	}
 }
@@ -1449,12 +1903,6 @@ function EditorMouseUp () {
 	
 }
 
-function TestAreaMove (delay) {
-	var area = areas[0];
-	area.moveDelay = delay;
-	area.delayTime = delay;
-	area.xMov = -1;
-}
 // mix: 0 = color0, 1 = color1
 function ColorBlend (color0, color1, mix) {
 	var r0 = parseInt(color0.slice(1, 3), 16);
@@ -1473,6 +1921,37 @@ function ColorBlend (color0, color1, mix) {
 	return "#" + rm + gm + bm;
 }
 
+function GenerateColorPalette (numColors) {
+	var rFrq = 1.66;
+	var gFrq = 2.66;
+	var bFrq = 4.66;
+	var start = Math.random() * Math.PI;
+	var starti = Math.round(Math.random() * 20) + 10;
+	var colors = [];
+	for (var i = starti; i < starti + numColors; i++)
+	{
+		var r = Math.sin(start + rFrq * i) * 100 + 155;
+		var g = Math.sin(start + gFrq * i) * 100 + 155;
+		var b = Math.sin(start + bFrq * i) * 100 + 155;
+		var rm = Math.round(r).toString(16);
+		var gm = Math.round(g).toString(16);
+		var bm = Math.round(b).toString(16);
+		rm = (rm.length === 2) ? rm : "0" + rm;
+		gm = (gm.length === 2) ? gm : "0" + gm;
+		bm = (bm.length === 2) ? bm : "0" + bm;
+		colors.push("#" + rm + gm + bm); 
+	}
+	return colors;
+}
+
+function RandomColor () {
+	return "#" + Math.round(Math.random() * 0xFFFFFF).toString(16);
+}
+
+window.onresize = function () {
+	ResizeCanvas();
+}
+
 function ResizeCanvas () {
 	canvas.width = window.innerWidth - 25;
 	canvas.height = window.innerHeight - 25;
@@ -1487,4 +1966,66 @@ function StartMapEditor () {
 }
 function EndMapEditor () {
 	editorActive = false;
+}
+
+function ClearLevel () {
+	areas = [];
+	drawObjects = [];
+	entities = [];
+	areaColors = [];
+
+	InitGame();
+
+}
+
+function ImportLevel (levelData) {
+	//import a levelData string into the current level
+	var importedData = JSON.parse(levelData);
+	if (importedData === null)
+	{
+		console.log("null levelData");
+		return;
+	}
+	ClearLevel();
+
+	for (var i = 0; i < importedData.areas.length; i++)
+	{
+		areaData = importedData.areas[i];
+		var newArea = new Area(areaData.x, areaData.y, areaData.z, areaData.xSize, areaData.ySize, areaData.zSize, true, areaData.map);
+		areas.push(newArea);
+		drawObjects.push(newArea);
+	}
+	player = new Entity(importedData.player.x, importedData.player.y, importedData.player.z);
+	entities.push(player);
+	drawObjects.push(player);
+	InitGame();
+}
+
+function ExportLevel () {
+	//export the current level to a levelData string
+	var levelData = {areas:[], player:{x: player.x, y: player.y, z: player.z}};
+	for (var i = 0; i < areas.length; i++)
+	{
+		var area = areas[i];
+		var dataObj = {
+			x: area.x,
+			y: area.y,
+			z: area.z,
+			xSize: area.xSize,
+			ySize: area.ySize,
+			zSize: area.zSize,
+			map: area.map,
+			rule: 0
+		};
+		levelData.areas.push(dataObj); 
+	}
+	return JSON.stringify(levelData);
+}
+
+function SaveToLocalStorage (levelData, levelName) {
+	localStorage.setItem(levelName, levelData);
+}
+
+function LoadFromLocalStorage (levelName) {
+	return localStorage.getItem(levelName);
 }
