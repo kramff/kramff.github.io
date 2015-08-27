@@ -1154,7 +1154,7 @@ function DrawEntity (entity) {
 	{
 		ctx.save();
 		ctx.strokeStyle = "#80FFFF";
-		ctx.fillStyle = "#208080";
+		ctx.fillStyle = "#80FFFF";
 		ctx.fillRect(x, y, scale, scale);
 		ctx.strokeRect(x, y, scale, scale);
 		ctx.restore();
