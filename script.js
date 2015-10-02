@@ -29,7 +29,14 @@ var receivedMessages = [];
 var MULTI_ON = false;
 try
 {
-	var socket = io("bine-online.herokuapp.com") || io("http://localhost:5000");
+	if (location.href === "http://kramff.github.io/")
+	{
+		socket = io("bine-online.herokuapp.com")
+	}
+	else
+	{
+		socket = io("http://localhost:5000");
+	}
 	socket.on("connect", function (data) {
 		console.log("Connected to server with id: " + socket.id);
 	});
