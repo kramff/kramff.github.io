@@ -29,7 +29,7 @@ var receivedMessages = [];
 var MULTI_ON = false;
 try
 {
-	var socket = io("http://localhost:5000");
+	var socket = io("bine-online.herokuapp.com") || io("http://localhost:5000");
 	socket.on("connect", function (data) {
 		console.log("Connected to server with id: " + socket.id);
 	});
