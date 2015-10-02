@@ -14,6 +14,8 @@ var serverLevels = [];
 // downloadedLevel: most recently downloaded level (in json string data form (?))
 var downloadedLevel = "";
 
+var usingServerLevel = false;
+
 // playerArray: other players in the same server level
 // [{id, name, color, x, y, z}, ...]
 var playerArray = [];
@@ -27,7 +29,7 @@ var receivedMessages = [];
 var MULTI_ON = false;
 try
 {
-	var socket = io("http://bine-online.herokuapp.com");
+	var socket = io("http://localhost:5000");
 	socket.on("connect", function (data) {
 		console.log("Connected to server with id: " + socket.id);
 	});
@@ -46,6 +48,13 @@ try
 		console.log("player disconnected");
 		RemovePlayer(data);
 	});
+
+	//Temporary level direct download
+	socket.on("chosenLevel", function (data) {
+		console.log("got chosen level from server");
+		ImportLevel(data.data);
+	});
+
 	function UpdatePlayer (playerData) {
 		for (var i = 0; i < playerArray.length; i++)
 		{
@@ -333,7 +342,7 @@ function Init () {
 
 
 	ResizeCanvas();
-	StartMapEditor();
+	// StartMapEditor();
 
 	player = CreateEntity();
 	InitGame();
